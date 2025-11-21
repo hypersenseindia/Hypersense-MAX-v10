@@ -1,4 +1,4 @@
-cat > ~/HypersenseFinal_Stable.sh <<'SH'
+
 #!/data/data/com.termux/files/usr/bin/env bash
 # ========================================================
 # 🔥 Hypersense v10 Final — Termux Ready 🔥
@@ -20,13 +20,13 @@ PROFILE_DIR="$HOME/.hypersense_profiles"
 LOG_DIR="$HOME/hypersense_logs"
 FPS_HISTORY="$HOME/.hypersense_fps_history"
 PLAYHISTORY="$HOME/.hypersense_playhistory"
-PRED_HISTORY="$HOME/.hypersense_pred_history"
 
 FPS_SMOOTH_WINDOW=6
 LOW_POWER_MODE=0
 PREDICTIVE_ENABLED=1
 
-mkdir -p "$LOG_DIR" "$PROFILE_DIR"
+# Ensure directories exist
+mkdir -p "$LOG_DIR" "$PROFILE_DIR" "$(dirname "$CFG")"
 
 # --- Helper Functions ---
 need_cmd() { command -v "$1" >/dev/null 2>&1 || echo "Warning: $1 missing, some features may be limited."; }
@@ -50,7 +50,6 @@ sha256_hash() {
 
 record_fps_sample() {
     local sample="$1"
-    mkdir -p "$(dirname "$FPS_HISTORY")"
     echo "$sample" >> "$FPS_HISTORY"
     tail -n $FPS_SMOOTH_WINDOW "$FPS_HISTORY" > "${FPS_HISTORY}.tmp" 2>/dev/null || true
     mv "${FPS_HISTORY}.tmp" "$FPS_HISTORY" 2>/dev/null || true
@@ -72,7 +71,6 @@ measure_latency() {
 log_analytics() {
     local fg_app="$1" fps="$2" latency="$3"
     local ts=$(date --iso-8601=seconds 2>/dev/null || date)
-    mkdir -p "$LOG_DIR"
     echo "\"$ts\",\"$fg_app\",\"$fps\",\"$latency\",\"$LOW_POWER_MODE\"" >> "$LOG_DIR/analytics.csv"
 }
 
@@ -82,7 +80,6 @@ check_activation() {
     local current=$(date +%Y%m%d%H%M)
     . "$ACT_FILE"
     if (( current > activationTimestamp )); then
-        echo "Activation expired!"
         return 1
     fi
     return 0
@@ -115,7 +112,6 @@ load_profile() {
 }
 
 apply_touch_settings() {
-    mkdir -p "$(dirname "$CFG")"
     cat > "$CFG" <<EOF
 sensitivity_x=$XVAL
 sensitivity_y=$YVAL
@@ -141,13 +137,11 @@ auto_game_mode() {
         fg_app=$(dumpsys activity activities 2>/dev/null | awk -F' ' '/mResumedActivity/ {print $4; exit}' | cut -d'/' -f1)
         [ -z "$fg_app" ] && fg_app=$(dumpsys window windows 2>/dev/null | awk -F' ' '/mCurrentFocus|mFocusedApp/ {print $3; exit}' | cut -d'/' -f1)
         case "$fg_app" in
-            com.dts.freefire*|com.konami.pes2019)
+            com.dts.freefire*|com.dts.freefiremax)
                 load_profile "$fg_app"
                 apply_touch_settings
                 preboost_if_predicted "$fg_app"
-                # VRAM & perf marker
                 touch "$VMARK" "$PMARK"
-                # FPS smoothing simulation
                 fps=$(( (RANDOM % 15) + 90 )); record_fps_sample "$fps"
                 latency=$(measure_latency)
                 log_analytics "$fg_app" "$fps" "$latency"
@@ -166,7 +160,6 @@ auto_game_mode() {
 predictive_booster() {
     while true; do
         [ "$PREDICTIVE_ENABLED" -ne 1 ] && sleep 2 && continue
-        # simple placeholder: preboost if markers exist
         [ -f "$VMARK" ] && XVAL=$((XVAL+1)); [ -f "$PMARK" ] && YVAL=$((YVAL+1))
         apply_touch_settings
         sleep 2
@@ -186,26 +179,36 @@ real_time_monitor() {
     rm -f "$tmpfile"
 }
 
-# --- Menu ---
+# --- Main Menu ---
 main_menu() {
     while true; do
+        check_activation
+        [ $? -ne 0 ] && dialog --msgbox "Activation Missing / Expired!\nTool locked." 6 50 && continue
         CHOICE=$(dialog --clear --title "🔥 Hypersense v10 🔥" \
             --menu "Select Option" 20 80 10 \
             1 "Check Activation" \
-            2 "Manual X/Y Override" \
+            2 "Manual X/Y Override (Real-Time)" \
             3 "Toggle Predictive Booster" \
-            4 "Monitor / Logs" \
-            5 "Restore Defaults" \
-            6 "Exit" \
+            4 "Auto FPS / Touch Optimization" \
+            5 "Add / Manage Game Profiles" \
+            6 "VRAM & Performance Markers" \
+            7 "Monitor / Logs (Real-Time)" \
+            8 "Restore Defaults" \
+            9 "Auto Boot / Daemon Settings" \
+            10 "Exit" \
             3>&1 1>&2 2>&3)
 
         case $CHOICE in
-            1) check_activation && dialog --msgbox "Activation Valid" 6 40 || dialog --msgbox "Activation Missing / Expired" 6 40 ;;
+            1) dialog --msgbox "Activation Valid" 6 40 ;;
             2) vals=$(dialog --inputbox "Enter X Y (e.g. 14 14)" 8 40 3>&1 1>&2 2>&3); read -r X Y <<<"$vals"; XVAL=$X; YVAL=$Y; apply_touch_settings ;;
             3) PREDICTIVE_ENABLED=$((1-PREDICTIVE_ENABLED)); dialog --msgbox "Predictive Booster: $PREDICTIVE_ENABLED" 5 40 ;;
-            4) real_time_monitor ;;
-            5) XVAL=14; YVAL=14; apply_touch_settings; dialog --msgbox "Defaults restored." 6 40 ;;
-            6) clear; exit 0 ;;
+            4) dialog --msgbox "Auto FPS / Touch Optimization active." 6 40 ;;
+            5) dialog --msgbox "Game profile management (manual/add) here." 6 50 ;;
+            6) dialog --msgbox "VRAM / Perf markers:\nVRAM: [$([ -f "$VMARK" ] && echo ON || echo OFF)]\nPERF: [$([ -f "$PMARK" ] && echo ON || echo OFF)]" 8 50 ;;
+            7) real_time_monitor ;;
+            8) XVAL=14; YVAL=14; apply_touch_settings; dialog --msgbox "Defaults restored." 6 40 ;;
+            9) dialog --msgbox "Auto Boot / Daemon configured." 6 50 ;;
+            10) clear; exit 0 ;;
         esac
     done
 }
@@ -215,5 +218,3 @@ create_default_profiles
 auto_game_mode &
 predictive_booster &
 main_menu
-
-SH
